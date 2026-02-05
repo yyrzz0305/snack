@@ -228,130 +228,120 @@ function updateDirFromTilt() {
 //  DRAW
 
 function drawSnake() {
-  noStroke();
-
-  // helper: draw one pixel block inside a cell
-  function pxCell(x, y, s, col) {
-    fill(col);
-    rect(x, y, s, s);
-  }
-
-  // Determine heading from dir
-  const heading =
-    dir.x === 1 ? "R" :
-    dir.x === -1 ? "L" :
-    dir.y === 1 ? "D" : "U";
-
   // colors
-  const bodyCol = color(168, 108, 60);  // dachshund brown
-  const darkCol = color(110, 70, 40);   // darker outline
-  const earCol  = color(90, 55, 30);    // ear
-  const faceCol = color(200, 150, 95);  // muzzle highlight
-  const noseCol = color(30);            // nose
+  const bodyCol = color(168, 108, 60);
+  const darkCol = color(110, 70, 40);
+  const earCol  = color(90, 55, 30);
+  const faceCol = color(200, 150, 95);
+  const noseCol = color(30);
   const eyeCol  = color(0);
 
-  // draw from tail to head so head overlays
-  for (let i = snake.length - 1; i >= 0; i--) {
-    const s = snake[i];
-    const x0 = s.x * cell;
-    const y0 = s.y * cell;
+  // helper: grid -> pixel center
+  const cx = (gx) => gx * cell + cell / 2;
+  const cy = (gy) => gy * cell + cell / 2;
 
-    // pixel size within each cell (4x4 or 5x5 look)
-    const p = max(3, floor(cell / 6)); // auto scale with cell
-    const pad = floor((cell - p * 5) / 2); // center a 5x5 pixel sprite
-    const ox = x0 + pad;
-    const oy = y0 + pad;
+  // ---- 1) draw connected "sausage body" along the snake path ----
+  stroke(bodyCol);
+  strokeCap(ROUND);
+  strokeJoin(ROUND);
 
-    // BODY segment (simple rounded-ish 5x5 block)
-    // (Head/tail will override below)
-    fill(bodyCol);
-    rect(x0 + 2, y0 + 2, cell - 4, cell - 4, 4);
+  // thickness: near cell size, but not full
+  const thick = max(10, cell * 0.85);
+  strokeWeight(thick);
 
-    // add a darker "back" stripe
+  noFill();
+  beginShape();
+  for (let i = 0; i < snake.length; i++) {
+    vertex(cx(snake[i].x), cy(snake[i].y));
+  }
+  endShape();
+
+  // darker back stripe (a thinner stroke on top)
+  stroke(darkCol);
+  strokeWeight(max(4, thick * 0.28));
+  beginShape();
+  for (let i = 0; i < snake.length; i++) {
+    vertex(cx(snake[i].x), cy(snake[i].y));
+  }
+  endShape();
+
+  // optional little feet hints (small dots) every few segments
+  noStroke();
+  fill(darkCol);
+  for (let i = 2; i < snake.length; i += 4) {
+    const px = cx(snake[i].x);
+    const py = cy(snake[i].y);
+    ellipse(px - thick * 0.25, py + thick * 0.25, max(3, thick * 0.12));
+    ellipse(px + thick * 0.25, py + thick * 0.25, max(3, thick * 0.12));
+  }
+
+  // ---- 2) draw a bigger head that sits on top ----
+  const head = snake[0];
+  const hx = cx(head.x);
+  const hy = cy(head.y);
+
+  // determine heading angle from dir
+  let ang = 0;
+  if (dir.x === 1) ang = 0;          // right
+  else if (dir.x === -1) ang = 180;  // left
+  else if (dir.y === 1) ang = 90;    // down
+  else if (dir.y === -1) ang = -90;  // up
+
+  // head size (bigger than body)
+  const headW = thick * 1.25;
+  const headH = thick * 1.05;
+
+  push();
+  translate(hx, hy);
+  rotate(ang);
+
+  // head base
+  noStroke();
+  fill(bodyCol);
+  ellipse(0, 0, headW, headH);
+
+  // muzzle (front)
+  fill(faceCol);
+  ellipse(headW * 0.33, 0, headW * 0.55, headH * 0.55);
+
+  // nose
+  fill(noseCol);
+  ellipse(headW * 0.56, 0, max(4, headW * 0.10), max(4, headW * 0.10));
+
+  // eye
+  fill(eyeCol);
+  ellipse(headW * 0.10, -headH * 0.15, max(3, headW * 0.06), max(3, headW * 0.06));
+
+  // ear (top-back)
+  fill(earCol);
+  // ear as a droopy oval
+  ellipse(-headW * 0.15, -headH * 0.35, headW * 0.30, headH * 0.55);
+
+  pop();
+
+  // ---- 3) tail nub (optional) ----
+  if (snake.length > 2) {
+    const tail = snake[snake.length - 1];
+    const prev = snake[snake.length - 2];
+    const tx = cx(tail.x);
+    const ty = cy(tail.y);
+    const tdx = tail.x - prev.x;
+    const tdy = tail.y - prev.y;
+
+    push();
+    translate(tx, ty);
+    // angle based on tail direction
+    let tang = 0;
+    if (tdx === 1) tang = 0;
+    else if (tdx === -1) tang = 180;
+    else if (tdy === 1) tang = 90;
+    else if (tdy === -1) tang = -90;
+    rotate(tang);
+
+    noStroke();
     fill(darkCol);
-    rect(x0 + 3, y0 + 3, cell - 6, max(3, floor((cell - 6) * 0.25)), 3);
-
-    // Tail (last segment)
-    if (i === snake.length - 1) {
-      // tail direction: away from previous
-      let tdx = 0, tdy = 0;
-      if (snake.length > 1) {
-        const prev = snake[i - 1];
-        tdx = s.x - prev.x;
-        tdy = s.y - prev.y;
-      } else {
-        tdx = -dir.x; tdy = -dir.y;
-      }
-
-      fill(darkCol);
-      // small tail nub on edge
-      if (tdx === 1) rect(x0 + cell - 4, y0 + cell / 2 - 2, 3, 4, 2);
-      else if (tdx === -1) rect(x0 + 1, y0 + cell / 2 - 2, 3, 4, 2);
-      else if (tdy === 1) rect(x0 + cell / 2 - 2, y0 + cell - 4, 4, 3, 2);
-      else if (tdy === -1) rect(x0 + cell / 2 - 2, y0 + 1, 4, 3, 2);
-      continue;
-    }
-
-    // Head (first segment)
-    if (i === 0) {
-      // head base
-      fill(bodyCol);
-      rect(x0 + 1, y0 + 1, cell - 2, cell - 2, 6);
-
-      // muzzle + nose depending on heading
-      if (heading === "R") {
-        fill(faceCol);
-        rect(x0 + cell - 8, y0 + cell / 2 - 4, 7, 8, 3);
-        fill(noseCol);
-        rect(x0 + cell - 3, y0 + cell / 2 - 1, 2, 2);
-
-        // eye + ear
-        fill(eyeCol);
-        rect(x0 + cell - 12, y0 + cell / 2 - 3, 2, 2);
-        fill(earCol);
-        rect(x0 + cell - 14, y0 + 3, 4, 6, 2);
-      } else if (heading === "L") {
-        fill(faceCol);
-        rect(x0 + 1, y0 + cell / 2 - 4, 7, 8, 3);
-        fill(noseCol);
-        rect(x0 + 1, y0 + cell / 2 - 1, 2, 2);
-
-        fill(eyeCol);
-        rect(x0 + 10, y0 + cell / 2 - 3, 2, 2);
-        fill(earCol);
-        rect(x0 + 10, y0 + 3, 4, 6, 2);
-      } else if (heading === "D") {
-        fill(faceCol);
-        rect(x0 + cell / 2 - 4, y0 + cell - 8, 8, 7, 3);
-        fill(noseCol);
-        rect(x0 + cell / 2 - 1, y0 + cell - 3, 2, 2);
-
-        fill(eyeCol);
-        rect(x0 + cell / 2 - 3, y0 + cell - 12, 2, 2);
-        fill(earCol);
-        rect(x0 + 3, y0 + cell - 14, 6, 4, 2);
-      } else { // "U"
-        fill(faceCol);
-        rect(x0 + cell / 2 - 4, y0 + 1, 8, 7, 3);
-        fill(noseCol);
-        rect(x0 + cell / 2 - 1, y0 + 1, 2, 2);
-
-        fill(eyeCol);
-        rect(x0 + cell / 2 - 3, y0 + 10, 2, 2);
-        fill(earCol);
-        rect(x0 + 3, y0 + 10, 6, 4, 2);
-      }
-
-      continue;
-    }
-
-    // Legs hint (every other body segment)
-    if (i % 2 === 0) {
-      fill(darkCol);
-      // little feet pixels
-      rect(x0 + 4, y0 + cell - 4, 4, 3, 2);
-      rect(x0 + cell - 8, y0 + cell - 4, 4, 3, 2);
-    }
+    ellipse(-thick * 0.55, 0, thick * 0.35, thick * 0.20);
+    pop();
   }
 }
 
