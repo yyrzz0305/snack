@@ -1,127 +1,189 @@
-// global variables
+// Create connection to Node.js Server
+const socket = io();
+
+let canvas;
+
+let randomX;
+let randomY;
+
+let me; // for storing my socket.id
+let experienceState = {
+  users: {}            // socket.id -> movement data
+};
+
+// Permission button (iOS)
 let askButton;
-
-// device motion
-let accX = 0, accY = 0, accZ = 0;
-let rrateX = 0, rrateY = 0, rrateZ = 0;
-
-// device orientation
-let rotateDegrees = 0;
-let frontToBack = 0;  // beta
-let leftToRight = 0;  // gamma
-
-// permission state
+let isMobileDevice = true;
 let hasPermission = false;
 
-// --- GAME ---
-let cell = 18;            // grid size in px
+// Device motion
+let accX = 0;
+let accY = 0;
+let accZ = 0;
+let rrateX = 0;
+let rrateY = 0;
+let rrateZ = 0;
+
+// Device orientation
+let rotateDegrees = 0;
+let frontToBack = 0;
+let leftToRight = 0;
+
+// throttle device motion sending
+let lastSent = 0;
+const SEND_RATE = 30; // ms (~33 fps)
+
+
+// ======================
+// SNAKE GAME VARIABLES
+// ======================
+let cell = 18;           // size of each grid cell (px)
 let cols, rows;
 
-let snake = [];           // array of {x,y} in grid coords
+let snake = [];          // array of {x,y} in grid coords
 let snakeLen = 6;
-let dir = { x: 1, y: 0 }; // current direction
-let pendingDir = { x: 1, y: 0 }; // next direction (from tilt)
-let moveEvery = 6;        // frames per move
+
+let dir = { x: 1, y: 0 };        // current direction
+let nextDir = { x: 1, y: 0 };    // direction from tilt
 let tick = 0;
+let moveEvery = 6;       // move snake every N frames
 
 let fruit = { x: 0, y: 0 };
 let score = 0;
 let gameOver = false;
 
+// tilt control
+let tiltThreshold = 12;  // deadzone
+// ======================
+
+
 function setup() {
-  createCanvas(windowWidth, windowHeight);
-  rectMode(CORNER);
-  textFont("monospace");
+  canvas = createCanvas(windowWidth, windowHeight);
+  canvas.parent("sketch-container"); 
 
-  resetGame();
+  //random position used for visualisation
+  randomX = random(50,width-50);
+  randomY = random(50,height-50);
 
-  // SENSOR PART
+  rectMode(CENTER);
+  angleMode(DEGREES);
+  //text styling
+  textSize(16);
+  textWrap(WORD);
+
+  // simplified DESKTOP vs. MOBILE DETECTION
+  isMobileDevice = checkMobileDevice();
+
+  // init snake game grid
+  initSnakeGame();
+
+  // iOS permission handling  (=== YOUR CODE STYLE, UNCHANGED ===)
   if (
     typeof DeviceMotionEvent.requestPermission === "function" &&
     typeof DeviceOrientationEvent.requestPermission === "function"
   ) {
-    // iOS 13+
-    askButton = createButton("Permission");
-    askButton.position(16, 16);
+    //add a button for permissions
+    askButton = createButton("Enable Motion Sensors");
+    askButton.parent("sketch-container");
+    askButton.id("permission-button"); // to add special styling for this button in style.css
     askButton.mousePressed(handlePermissionButtonPressed);
   } else {
-    // devices that don't require permission
+    // Android / non-permission devices
     window.addEventListener("devicemotion", deviceMotionHandler, true);
     window.addEventListener("deviceorientation", deviceOrientationHandler, true);
     hasPermission = true;
   }
-  // -----------------------------------------
 }
 
 function draw() {
-  background(245);
+  background(240);
 
-  drawHUD();
-
-  if (!hasPermission) {
-    fill(0);
-    textAlign(LEFT, TOP);
-    textSize(14);
-    text("Tap 'Permission' to enable motion/orientation.", 16, 70);
-    // still show static game screen
+  // draw movers for everyone (your original multi-user visualisation)
+  for (let id in experienceState.users) {
+    if (experienceState.users[id].deviceMoves) {
+      drawOthers(id);
+    }
   }
 
-  if (gameOver) {
-    drawGameOver();
+  // DESKTOP MESSAGE 
+  if (!isMobileDevice) {
+    displayDesktopMessage();
     return;
   }
 
-  // update direction from tilt (only when permission is on)
-  if (hasPermission) updateDirFromTilt();
-
-  // move snake on a grid
-  tick++;
-  if (tick % moveEvery === 0) {
-    // apply pending direction safely
-    setDirSafely(pendingDir.x, pendingDir.y);
-    stepSnake();
+  // WAITING FOR PERMISSION 
+  if (!hasPermission) {
+    displayPermissionMessage();
+    return;
   }
 
-  drawFruit();
-  drawSnake();
+  // ======================
+  // SNAKE GAME RUNS HERE
+  // ======================
+  runSnakeGame();
+
+  // still send your data to server (guard for safety)
+  emitData();
 }
 
-// ------------------- GAME -------------------
 
-function resetGame() {
+
+// --------------------
+// Your multi-user drawing (unchanged)
+// --------------------
+function drawOthers(id){
+  let u = experienceState.users[id];
+  let motion = u.motionData;
+  if (!motion) return;
+
+  let rectHeight = map(motion.orientation.beta, -90,90,0,height);//front to back is beta
+
+  fill(0,0,255,100);// slightly transparent
+  push();
+  rectMode(CORNER);
+  noStroke();
+  rect(motion.screenPosition.x,0,40,rectHeight);
+  pop();
+}
+
+
+// ======================
+// SNAKE GAME FUNCTIONS
+// ======================
+function initSnakeGame() {
   cols = floor(width / cell);
   rows = floor(height / cell);
 
   snakeLen = 6;
   score = 0;
   gameOver = false;
+  tick = 0;
 
-  // start centered
-  const sx = floor(cols / 2);
-  const sy = floor(rows / 2);
+  let sx = floor(cols / 2);
+  let sy = floor(rows / 2);
+
   snake = [];
   for (let i = 0; i < snakeLen; i++) {
     snake.push({ x: sx - i, y: sy });
   }
+
   dir = { x: 1, y: 0 };
-  pendingDir = { x: 1, y: 0 };
+  nextDir = { x: 1, y: 0 };
 
   spawnFruit();
 }
 
 function spawnFruit() {
-  // pick an empty cell
   let tries = 0;
   while (tries < 2000) {
-    const x = floor(random(cols));
-    const y = floor(random(rows));
+    let x = floor(random(cols));
+    let y = floor(random(rows));
     let ok = true;
-    for (const s of snake) {
-      if (s.x === x && s.y === y) {
-        ok = false;
-        break;
-      }
+
+    for (let s of snake) {
+      if (s.x === x && s.y === y) { ok = false; break; }
     }
+
     if (ok) {
       fruit.x = x;
       fruit.y = y;
@@ -131,9 +193,81 @@ function spawnFruit() {
   }
 }
 
+function runSnakeGame() {
+  // HUD
+  drawSnakeHUD();
+
+  if (gameOver) {
+    drawSnakeGameOver();
+    return;
+  }
+
+  // update direction from tilt (beta/gamma)
+  updateSnakeDirFromTilt();
+
+  // step movement
+  tick++;
+  if (tick % moveEvery === 0) {
+    applyDirSafely(nextDir.x, nextDir.y);
+    stepSnake();
+  }
+
+  // draw
+  drawFruit();
+  drawSnake();
+}
+
+function drawSnakeHUD() {
+  fill(0);
+  textAlign(LEFT, TOP);
+  textSize(14);
+  text(`Score: ${score}`, 10, 10);
+
+  // small debug to ensure sensors are changing
+  textSize(12);
+  text(`beta: ${frontToBack.toFixed(1)}  gamma: ${leftToRight.toFixed(1)}`, 10, 30);
+
+  // optional instruction
+  textSize(12);
+  text("Tilt to move. Tap to restart when game over.", 10, 50);
+}
+
+function updateSnakeDirFromTilt() {
+  let g = leftToRight;   // gamma (L/R)
+  let b = frontToBack;   // beta (F/B)
+
+  let ag = abs(g);
+  let ab = abs(b);
+
+  // deadzone
+  if (ag < tiltThreshold && ab < tiltThreshold) return;
+
+  // dominant axis
+  if (ag > ab) {
+    // right positive
+    if (g > tiltThreshold) nextDir = { x: 1, y: 0 };
+    else if (g < -tiltThreshold) nextDir = { x: -1, y: 0 };
+  } else {
+    // forward/back
+    if (b > tiltThreshold) nextDir = { x: 0, y: 1 };
+    else if (b < -tiltThreshold) nextDir = { x: 0, y: -1 };
+  }
+}
+
+function applyDirSafely(nx, ny) {
+  // prevent reversing into neck
+  if (snake.length > 1) {
+    let head = snake[0];
+    let neck = snake[1];
+    if (head.x + nx === neck.x && head.y + ny === neck.y) return;
+  }
+  dir.x = nx;
+  dir.y = ny;
+}
+
 function stepSnake() {
-  const head = snake[0];
-  const next = { x: head.x + dir.x, y: head.y + dir.y };
+  let head = snake[0];
+  let next = { x: head.x + dir.x, y: head.y + dir.y };
 
   // wall collision
   if (next.x < 0 || next.x >= cols || next.y < 0 || next.y >= rows) {
@@ -149,7 +283,6 @@ function stepSnake() {
     }
   }
 
-  // move
   snake.unshift(next);
 
   // eat fruit
@@ -159,53 +292,26 @@ function stepSnake() {
     spawnFruit();
   }
 
-  // trim
   while (snake.length > snakeLen) snake.pop();
 }
 
-function setDirSafely(nx, ny) {
-  // prevent reversing into itself
-  if (snake.length > 1) {
-    const head = snake[0];
-    const neck = snake[1];
-    if (head.x + nx === neck.x && head.y + ny === neck.y) return;
-  }
-  dir.x = nx;
-  dir.y = ny;
-}
-
-function updateDirFromTilt() {
-  // Use YOUR orientation vars:
-  // leftToRight = gamma, frontToBack = beta
-  const g = leftToRight;
-  const b = frontToBack;
-
-  // deadzone to avoid jitter
-  const threshold = 12;
-
-  const ag = abs(g);
-  const ab = abs(b);
-
-  if (ag < threshold && ab < threshold) return;
-
-  // choose dominant axis
-  if (ag > ab) {
-    // gamma: right positive
-    pendingDir = g > 0 ? { x: 1, y: 0 } : { x: -1, y: 0 };
-  } else {
-    // beta: tilt forward/back
-    pendingDir = b > 0 ? { x: 0, y: 1 } : { x: 0, y: -1 };
-  }
-}
-
-// ------------------- DRAW -------------------
-
 function drawSnake() {
   noStroke();
+
+  // background grid feel (subtle)
+  push();
+  stroke(230);
+  strokeWeight(1);
+  for (let x = 0; x < width; x += cell) line(x, 0, x, height);
+  for (let y = 0; y < height; y += cell) line(0, y, width, y);
+  pop();
+
+  // snake
   for (let i = 0; i < snake.length; i++) {
-    const s = snake[i];
+    let s = snake[i];
     if (i === 0) fill(30);
     else fill(80);
+
     rect(s.x * cell, s.y * cell, cell, cell);
   }
 }
@@ -213,74 +319,153 @@ function drawSnake() {
 function drawFruit() {
   noStroke();
   fill(220, 60, 60);
-  const x = fruit.x * cell + cell / 2;
-  const y = fruit.y * cell + cell / 2;
-  ellipse(x, y, cell * 0.75, cell * 0.75);
+  ellipse(fruit.x * cell + cell / 2, fruit.y * cell + cell / 2, cell * 0.75);
 }
 
-function drawHUD() {
-  fill(0);
-  textAlign(LEFT, TOP);
-  textSize(14);
-  text(`Score: ${score}`, 16, 16);
-
-  textSize(12);
-  text(`beta: ${frontToBack.toFixed(1)}  gamma: ${leftToRight.toFixed(1)}`, 16, 38);
-
-  if (!hasPermission) {
-    text("Sensors OFF", 16, 54);
-  } else {
-    text("Sensors ON", 16, 54);
-  }
-}
-
-function drawGameOver() {
+function drawSnakeGameOver() {
   fill(0, 160);
+  rectMode(CORNER);
   rect(0, 0, width, height);
 
   fill(255);
   textAlign(CENTER, CENTER);
-  textSize(26);
+  textSize(28);
   text("GAME OVER", width / 2, height / 2 - 20);
 
   textSize(14);
-  text(`Score: ${score}`, width / 2, height / 2 + 10);
-  text("Tap to restart", width / 2, height / 2 + 34);
+  text(`Score: ${score}`, width / 2, height / 2 + 12);
+  text("Tap to restart", width / 2, height / 2 + 36);
+
+  rectMode(CENTER);
 }
 
-// restart
 function touchStarted() {
   if (gameOver) {
-    resetGame();
+    initSnakeGame();
   }
   return false;
 }
+
 function mousePressed() {
   if (gameOver) {
-    resetGame();
+    initSnakeGame();
   }
 }
 
-function windowResized() {
-  resizeCanvas(windowWidth, windowHeight);
-  resetGame(); // recalc grid based on new size
+
+
+// SEND DATA TO SERVER (kept, but safe-guarded)
+function emitData(){
+  // throttle
+  let now = millis();
+  if (now - lastSent < SEND_RATE){
+    return;
+  } 
+  lastSent = now;
+
+  let myMotionData = {
+    screenPosition: { 
+      x: randomX,
+      y: randomY
+    },
+    acceleration: {
+      x: accX,
+      y: accY,
+      z: accZ,
+    },
+    rotationRate: {
+      alpha: rrateZ,
+      beta: rrateX,
+      gamma: rrateY,
+    },
+    orientation: {
+      alpha: rotateDegrees,
+      beta: frontToBack,
+      gamma: leftToRight,
+    }
+  };
+
+  // update experience state in my browser (guard)
+  if (me && experienceState.users[me]) {
+    experienceState.users[me].deviceMoves = true;
+    experienceState.users[me].motionData = myMotionData;
+  }
+
+  socket.emit("motionData", myMotionData);
 }
 
-//sensor
+//not mobile message
+function displayDesktopMessage() {
+  fill(0);
+  textAlign(CENTER);
+  let message = "This is a mobile experience. Please also open this URL on your phone’s browser.";
+  text(message, width / 2, 30, width);//4th parameter to get text to wrap to new line if wider than canvas
+}
 
+function displayPermissionMessage() {
+  fill(0);
+  textAlign(CENTER);
+  let message = "Waiting for motion sensor permission, click the button to allow.";
+  text(message, width / 2, 30, width);//4th parameter to get text to wrap to new line if wider than canvas
+}
+
+// --------------------
+// Socket events
+// --------------------
+
+// initial full state
+socket.on("init", (data) => {
+  me = data.id;
+  experienceState = data.state;
+  console.log(experienceState);
+});
+
+// someone joined
+socket.on("userJoined", (data) => {
+  experienceState.users[data.id] = data.user;
+});
+
+// someone left
+socket.on("userLeft", (id) => {
+  delete experienceState.users[id];
+});
+
+// someone moved
+socket.on("userMoved", (data) => {
+  let id = data.id;
+  if (experienceState.users[id]) {
+    experienceState.users[id].deviceMoves = data.deviceMoves;
+    experienceState.users[id].motionData = data.motion;
+  }
+});
+
+// --------------------
+// Permission handling (=== YOUR CODE, UNCHANGED ===)
+// --------------------
 function handlePermissionButtonPressed() {
   DeviceMotionEvent.requestPermission()
     .then((response) => {
       if (response === "granted") {
+        //permission granted
         hasPermission = true;
-        window.addEventListener("devicemotion", deviceMotionHandler, true);
+
+        window.addEventListener(
+          "devicemotion",
+          deviceMotionHandler,
+          true
+        );
       }
-    });
+    })
+    .catch(console.error);
 
   DeviceOrientationEvent.requestPermission()
     .then((response) => {
       if (response === "granted") {
-        window.addEventListener("deviceorientation", deviceOrientationHandler, true);
+        window.addEventListener(
+          "deviceorientation",
+          deviceOrientationHandler,
+          true
+        );
       }
     })
     .catch(console.error);
@@ -288,16 +473,29 @@ function handlePermissionButtonPressed() {
   askButton.remove();
 }
 
+// --------------------
+// Window Resize
+// --------------------
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  initSnakeGame();
+}
+
+// --------------------
+// Sensor handlers (=== YOUR CODE, UNCHANGED ===)
+// --------------------
 // https://developer.mozilla.org/en-US/docs/Web/API/Window/devicemotion_event
 function deviceMotionHandler(event) {
-  if (!event.acceleration || !event.rotationRate) {
+  if (!event.acceleration || !event.rotationRate){
     return;
   }
 
+  //acceleration in meters per second
   accX = event.acceleration.x || 0;
   accY = event.acceleration.y || 0;
   accZ = event.acceleration.z || 0;
 
+  //degrees per second
   rrateZ = event.rotationRate.alpha || 0;
   rrateX = event.rotationRate.beta || 0;
   rrateY = event.rotationRate.gamma || 0;
@@ -308,4 +506,13 @@ function deviceOrientationHandler(event) {
   rotateDegrees = event.alpha || 0;
   frontToBack = event.beta || 0;
   leftToRight = event.gamma || 0;
+}
+
+// --------------------
+// Mobile Device Check
+// --------------------
+function checkMobileDevice() {
+  let userAgent = navigator.userAgent;
+  let mobileRegex = /Mobi|Android|iPhone|iPad|iPod/i;
+  return mobileRegex.test(userAgent);
 }
