@@ -288,7 +288,7 @@ function restartGame() {
     window.addEventListener("deviceorientation", deviceOrientationHandler, true);
     hasPermission = true;
   }
-}
+
 
 function deviceMotionHandler(event) {
   if (!event.acceleration) return;
