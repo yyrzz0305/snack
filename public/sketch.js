@@ -1,11 +1,3 @@
-// ====== SNAKE EATS FRUIT (p5.js) ======
-// Uses YOUR sensor permission + handlers exactly in the same style:
-// - iOS button: DeviceMotionEvent.requestPermission + DeviceOrientationEvent.requestPermission
-// - window.addEventListener('devicemotion' / 'deviceorientation', ...)
-// - deviceMotionHandler uses event.acceleration + event.rotationRate (no accelIncludingGravity fallback)
-// - deviceOrientationHandler uses alpha/beta/gamma
-// =====================================
-
 // global variables
 let askButton;
 
