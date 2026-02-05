@@ -269,23 +269,26 @@ function restartGame() {
 }
 
 // ---------- Permissions + Sensors ----------
-function handlePermissionButtonPressed() {
-  DeviceMotionEvent.requestPermission()
-    .then((response) => {
-      if (response === "granted") {
-        window.addEventListener("devicemotion", deviceMotionHandler, true);
-      }
-    })
-    .catch(console.error);
+// simplified DESKTOP vs. MOBILE DETECTION
+  isMobileDevice = checkMobileDevice();
 
-  DeviceOrientationEvent.requestPermission()
-    .then((response) => {
-      if (response === "granted") {
-        window.addEventListener("deviceorientation", deviceTurnedHandler, true);
-      }
-    })
-    .catch(console.error);
-}
+  // iOS permission handling
+  if (
+    typeof DeviceMotionEvent.requestPermission === "function" &&
+    typeof DeviceOrientationEvent.requestPermission === "function"
+  ) {
+    //add a button for permissions
+    askButton = createButton("Enable Motion Sensors");
+    askButton.parent("sketch-container");
+    askButton.id("permission-button"); // to add special styling for this button in style.css
+    askButton.mousePressed(handlePermissionButtonPressed);
+  } else {
+    // Android / non-permission devices
+    window.addEventListener("devicemotion", deviceMotionHandler, true);
+    window.addEventListener("deviceorientation", deviceOrientationHandler, true);
+    hasPermission = true;
+  }
+
 
 function deviceMotionHandler(event) {
   if (!event.acceleration) return;
