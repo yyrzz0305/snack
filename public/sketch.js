@@ -1,12 +1,19 @@
-// ====== GYRO SNAKE (p5.js) ======
-// iPhone: tap button to request permission
-// Control: tilt phone (beta/gamma) to steer
-// Includes: robust iOS permission handling + calibration button + anti-jitter
-// ===============================
-
-// ------------------ GLOBALS ------------------
+//创建连接
+const socket = io();
+let canvas;
+let randomX;
+let randomY;
 let askButton;
 let calibButton;
+let me; // for storing my socket.id
+let experienceState = {
+  users: {}            // socket.id -> movement data
+};
+
+// Permission button (iOS)
+let askButton;
+let isMobileDevice = true;
+let hasPermission = false;
 
 // Device motion
 let accX = 0, accY = 0, accZ = 0;
