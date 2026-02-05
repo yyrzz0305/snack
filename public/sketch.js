@@ -1,8 +1,3 @@
-// ====== SNAKE EATS FRUIT (p5.js, mobile gyro control) ======
-// iOS: button permission -> devicemotion + deviceorientation
-// Direction uses beta/gamma with deadzone + cooldown to reduce jitter.
-// ===========================================================
-
 let askButton;
 
 // Device motion
@@ -46,7 +41,7 @@ function setup() {
   isMobileDevice = checkMobileDevice();
   resetGame();
 
-  // ---- SENSOR PART (same style as yours) ----
+  // SENSOR PART
   if (
     typeof DeviceMotionEvent?.requestPermission === "function" &&
     typeof DeviceOrientationEvent?.requestPermission === "function"
@@ -106,7 +101,7 @@ function draw() {
   drawSnake();
 }
 
-// ------------------- GAME -------------------
+// GAME
 
 function resetGame() {
   cols = max(10, floor(width / cell));
@@ -178,8 +173,6 @@ function setDirSafely(nx, ny) {
   dir.y = ny;
 }
 
-// ------------------- GYRO CONTROL -------------------
-
 // Basic portrait/landscape compensation so it feels consistent
 function getScreenAngle() {
   // Some browsers support screen.orientation.angle, some use window.orientation
@@ -232,7 +225,7 @@ function updateDirFromTilt() {
   lastDirChangeMs = now;
 }
 
-// ------------------- DRAW -------------------
+//  DRAW
 
 function drawSnake() {
   noStroke();
@@ -303,7 +296,7 @@ function windowResized() {
   resetGame();
 }
 
-// ------------------- YOUR SENSOR CODE (UNCHANGED STYLE) -------------------
+// SENSOR CODE
 
 function handlePermissionButtonPressed() {
   DeviceMotionEvent.requestPermission()
