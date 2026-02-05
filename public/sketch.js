@@ -1,4 +1,12 @@
+// ====== GYRO SNAKE (p5.js) ======
+// iPhone: tap button to request permission
+// Control: tilt phone (beta/gamma) to steer
+// Includes: robust iOS permission handling + calibration button + anti-jitter
+// ===============================
+
+// ------------------ GLOBALS ------------------
 let askButton;
+let calibButton;
 
 // Device motion
 let accX = 0, accY = 0, accZ = 0;
@@ -11,6 +19,11 @@ let leftToRight = 0;   // gamma
 
 let hasPermission = false;
 let isMobileDevice = true;
+
+// Calibration (zero offsets)
+let zeroBeta = 0;
+let zeroGamma = 0;
+let hasCalibrated = false;
 
 // --- GAME ---
 let cell = 18;
@@ -33,6 +46,7 @@ let lastDirChangeMs = 0;
 const DIR_COOLDOWN_MS = 140;
 const TILT_THRESHOLD = 12;
 
+// ------------------ SETUP / DRAW ------------------
 function setup() {
   createCanvas(windowWidth, windowHeight);
   rectMode(CORNER);
@@ -41,20 +55,7 @@ function setup() {
   isMobileDevice = checkMobileDevice();
   resetGame();
 
-  // SENSOR PART
-  if (
-    typeof DeviceMotionEvent?.requestPermission === "function" &&
-    typeof DeviceOrientationEvent?.requestPermission === "function"
-  ) {
-    askButton = createButton("Enable Motion Sensors");
-    askButton.position(16, 16);
-    askButton.id("permission-button");
-    askButton.mousePressed(handlePermissionButtonPressed);
-  } else {
-    window.addEventListener("devicemotion", deviceMotionHandler, true);
-    window.addEventListener("deviceorientation", deviceOrientationHandler, true);
-    hasPermission = true;
-  }
+  setupSensorUI();
 }
 
 function draw() {
@@ -62,18 +63,20 @@ function draw() {
 
   drawHUD();
 
+  // Desktop note
   if (!isMobileDevice) {
     fill(0);
     textAlign(LEFT, TOP);
     textSize(14);
-    text("Desktop: use arrow keys. Mobile: tilt phone to play.", 16, 70);
+    text("Desktop: use arrow keys. Mobile: tilt phone to play.", 16, 92);
   }
 
+  // Waiting permission note
   if (!hasPermission && isMobileDevice) {
     fill(0);
     textAlign(LEFT, TOP);
     textSize(14);
-    text("Tap the button to allow motion sensors (iOS needs permission).", 16, 70);
+    text("Tap 'Enable Motion Sensors' to allow sensor access (iOS needs permission).", 16, 92);
   }
 
   if (gameOver) {
@@ -81,16 +84,10 @@ function draw() {
     return;
   }
 
-  // Mobile: update dir from tilt
-  if (hasPermission) {
-    updateDirFromTilt();
-  }
+  // Update direction from tilt
+  if (hasPermission) updateDirFromTilt();
 
-  // Desktop fallback
-  if (!isMobileDevice) {
-    // keep pendingDir from keyboard
-  }
-
+  // Move snake on grid
   tick++;
   if (tick % moveEvery === 0) {
     setDirSafely(pendingDir.x, pendingDir.y);
@@ -101,8 +98,97 @@ function draw() {
   drawSnake();
 }
 
-// GAME
+// ------------------ SENSOR UI ------------------
+function setupSensorUI() {
+  const needsIOSPermission =
+    typeof DeviceMotionEvent?.requestPermission === "function" ||
+    typeof DeviceOrientationEvent?.requestPermission === "function";
 
+  if (needsIOSPermission) {
+    askButton = createButton("Enable Motion Sensors");
+    styleTopButton(askButton, 16, 16);
+    askButton.id("permission-button");
+    askButton.mousePressed(handlePermissionButtonPressed);
+  } else {
+    // Android / non-permission devices
+    window.addEventListener("devicemotion", deviceMotionHandler, true);
+    window.addEventListener("deviceorientation", deviceOrientationHandler, true);
+    hasPermission = true;
+  }
+
+  // Calibration button (works after sensors start)
+  calibButton = createButton("Calibrate (hold phone neutral)");
+  styleTopButton(calibButton, 16, 60);
+  calibButton.mousePressed(() => {
+    zeroBeta = frontToBack;
+    zeroGamma = leftToRight;
+    hasCalibrated = true;
+  });
+}
+
+function styleTopButton(btn, x, y) {
+  btn.position(x, y);
+  btn.style("position", "fixed");
+  btn.style("z-index", "9999");
+  btn.style("padding", "12px 16px");
+  btn.style("font-size", "16px");
+  btn.style("border", "1px solid #222");
+  btn.style("border-radius", "10px");
+  btn.style("background", "#fff");
+}
+
+// iOS permission request (robust, sequential await)
+async function handlePermissionButtonPressed() {
+  try {
+    // Motion
+    if (typeof DeviceMotionEvent?.requestPermission === "function") {
+      const r1 = await DeviceMotionEvent.requestPermission();
+      if (r1 === "granted") {
+        window.addEventListener("devicemotion", deviceMotionHandler, true);
+      }
+    } else {
+      window.addEventListener("devicemotion", deviceMotionHandler, true);
+    }
+
+    // Orientation
+    if (typeof DeviceOrientationEvent?.requestPermission === "function") {
+      const r2 = await DeviceOrientationEvent.requestPermission();
+      if (r2 === "granted") {
+        window.addEventListener("deviceorientation", deviceOrientationHandler, true);
+      }
+    } else {
+      window.addEventListener("deviceorientation", deviceOrientationHandler, true);
+    }
+
+    // Snake control mainly needs orientation, but we treat success as permission enabled
+    hasPermission = true;
+    askButton?.remove();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// ------------------ SENSOR HANDLERS ------------------
+function deviceMotionHandler(event) {
+  // iOS sometimes gives null values; keep your strict style (no accelIncludingGravity fallback)
+  if (!event.acceleration || !event.rotationRate) return;
+
+  accX = event.acceleration.x || 0;
+  accY = event.acceleration.y || 0;
+  accZ = event.acceleration.z || 0;
+
+  rrateZ = event.rotationRate.alpha || 0;
+  rrateX = event.rotationRate.beta || 0;
+  rrateY = event.rotationRate.gamma || 0;
+}
+
+function deviceOrientationHandler(event) {
+  rotateDegrees = event.alpha || 0;
+  frontToBack = event.beta || 0;
+  leftToRight = event.gamma || 0;
+}
+
+// ------------------ GAME ------------------
 function resetGame() {
   cols = max(10, floor(width / cell));
   rows = max(10, floor(height / cell));
@@ -141,10 +227,13 @@ function stepSnake() {
   const head = snake[0];
   const next = { x: head.x + dir.x, y: head.y + dir.y };
 
+  // wall collision
   if (next.x < 0 || next.x >= cols || next.y < 0 || next.y >= rows) {
     gameOver = true;
     return;
   }
+
+  // self collision
   for (let i = 0; i < snake.length; i++) {
     if (snake[i].x === next.x && snake[i].y === next.y) {
       gameOver = true;
@@ -152,18 +241,22 @@ function stepSnake() {
     }
   }
 
+  // move
   snake.unshift(next);
 
+  // eat fruit
   if (next.x === fruit.x && next.y === fruit.y) {
     score++;
     snakeLen += 2;
     spawnFruit();
   }
 
+  // trim
   while (snake.length > snakeLen) snake.pop();
 }
 
 function setDirSafely(nx, ny) {
+  // prevent reversing into itself
   if (snake.length > 1) {
     const head = snake[0];
     const neck = snake[1];
@@ -173,9 +266,9 @@ function setDirSafely(nx, ny) {
   dir.y = ny;
 }
 
+// ------------------ GYRO CONTROL ------------------
 // Basic portrait/landscape compensation so it feels consistent
 function getScreenAngle() {
-  // Some browsers support screen.orientation.angle, some use window.orientation
   const a = (screen.orientation && typeof screen.orientation.angle === "number")
     ? screen.orientation.angle
     : (typeof window.orientation === "number" ? window.orientation : 0);
@@ -186,25 +279,21 @@ function updateDirFromTilt() {
   const now = millis();
   if (now - lastDirChangeMs < DIR_COOLDOWN_MS) return;
 
-  // raw values
-  let b = frontToBack;  // beta
-  let g = leftToRight;  // gamma
+  // apply calibration offsets
+  let b = frontToBack - (hasCalibrated ? zeroBeta : 0);  // beta
+  let g = leftToRight - (hasCalibrated ? zeroGamma : 0); // gamma
 
-  // compensate rotation
+  // compensate screen rotation
   const angle = getScreenAngle();
-  // angle can be 0, 90, 180, 270 (or -90)
   if (angle === 90 || angle === -270) {
-    // rotated right: swap axes
     const tmp = b;
     b = -g;
     g = tmp;
   } else if (angle === -90 || angle === 270) {
-    // rotated left: swap axes
     const tmp = b;
     b = g;
     g = -tmp;
   } else if (angle === 180 || angle === -180) {
-    // upside down: invert both
     b = -b;
     g = -g;
   }
@@ -213,21 +302,26 @@ function updateDirFromTilt() {
   const ag = abs(g);
   if (ab < TILT_THRESHOLD && ag < TILT_THRESHOLD) return;
 
-  // dominant axis
+  // choose dominant axis
   if (ag > ab) {
-    // gamma: right positive
     pendingDir = g > 0 ? { x: 1, y: 0 } : { x: -1, y: 0 };
   } else {
-    // beta: forward positive (down on screen)
     pendingDir = b > 0 ? { x: 0, y: 1 } : { x: 0, y: -1 };
   }
 
   lastDirChangeMs = now;
 }
 
-//  DRAW
-
+// ------------------ DRAW ------------------
 function drawSnake() {
+  noStroke();
+
+  // Determine heading from dir
+  const heading =
+    dir.x === 1 ? "R" :
+    dir.x === -1 ? "L" :
+    dir.y === 1 ? "D" : "U";
+
   // colors
   const bodyCol = color(168, 108, 60);
   const darkCol = color(110, 70, 40);
@@ -236,137 +330,94 @@ function drawSnake() {
   const noseCol = color(30);
   const eyeCol  = color(0);
 
-  // helper: grid -> pixel center
-  const cx = (gx) => gx * cell + cell / 2;
-  const cy = (gy) => gy * cell + cell / 2;
+  // draw from tail to head so head overlays
+  for (let i = snake.length - 1; i >= 0; i--) {
+    const s = snake[i];
+    const x0 = s.x * cell;
+    const y0 = s.y * cell;
 
-  // ---- 1) draw connected "sausage body" along the snake path ----
-  stroke(bodyCol);
-  strokeCap(ROUND);
-  strokeJoin(ROUND);
+    // BODY segment
+    fill(bodyCol);
+    rect(x0 + 2, y0 + 2, cell - 4, cell - 4, 4);
 
-  // thickness: near cell size, but not full
-  const thick = max(10, cell * 0.85);
-  strokeWeight(thick);
-
-  noFill();
-  beginShape();
-  for (let i = 0; i < snake.length; i++) {
-    vertex(cx(snake[i].x), cy(snake[i].y));
-  }
-  endShape();
-
-  // darker back stripe (a thinner stroke on top)
-  stroke(darkCol);
-  strokeWeight(max(4, thick * 0.28));
-  beginShape();
-  for (let i = 0; i < snake.length; i++) {
-    vertex(cx(snake[i].x), cy(snake[i].y));
-  }
-  endShape();
-
-  // optional little feet hints (small dots) every few segments
-  noStroke();
-  fill(darkCol);
-  for (let i = 2; i < snake.length; i += 4) {
-    const px = cx(snake[i].x);
-    const py = cy(snake[i].y);
-    ellipse(px - thick * 0.25, py + thick * 0.25, max(3, thick * 0.12));
-    ellipse(px + thick * 0.25, py + thick * 0.25, max(3, thick * 0.12));
-  }
-
-  // ---- 2) draw a bigger head that sits on top ----
-  const head = snake[0];
-  const hx = cx(head.x);
-  const hy = cy(head.y);
-
-  // determine heading angle from dir
-  let ang = 0;
-  if (dir.x === 1) ang = 0;          // right
-  else if (dir.x === -1) ang = 180;  // left
-  else if (dir.y === 1) ang = 90;    // down
-  else if (dir.y === -1) ang = -90;  // up
-
-  // head size (bigger than body)
-  const headW = thick * 1.25;
-  const headH = thick * 1.05;
-
-  push();
-  translate(hx, hy);
-  rotate(ang);
-
-  // head base
-  noStroke();
-  fill(bodyCol);
-  ellipse(0, 0, headW, headH);
-
-  // muzzle (front)
-  fill(faceCol);
-  ellipse(headW * 0.33, 0, headW * 0.55, headH * 0.55);
-
-  // nose
-  fill(noseCol);
-  ellipse(headW * 0.56, 0, max(4, headW * 0.10), max(4, headW * 0.10));
-
-  // eye
-  fill(eyeCol);
-  ellipse(headW * 0.10, -headH * 0.15, max(3, headW * 0.06), max(3, headW * 0.06));
-
-  // ear (top-back)
-  fill(earCol);
-  // ear as a droopy oval
-  ellipse(-headW * 0.15, -headH * 0.35, headW * 0.30, headH * 0.55);
-
-  pop();
-
-  // ---- 3) tail nub (optional) ----
-  if (snake.length > 2) {
-    const tail = snake[snake.length - 1];
-    const prev = snake[snake.length - 2];
-    const tx = cx(tail.x);
-    const ty = cy(tail.y);
-    const tdx = tail.x - prev.x;
-    const tdy = tail.y - prev.y;
-
-    push();
-    translate(tx, ty);
-    // angle based on tail direction
-    let tang = 0;
-    if (tdx === 1) tang = 0;
-    else if (tdx === -1) tang = 180;
-    else if (tdy === 1) tang = 90;
-    else if (tdy === -1) tang = -90;
-    rotate(tang);
-
-    noStroke();
+    // darker stripe
     fill(darkCol);
-    ellipse(-thick * 0.55, 0, thick * 0.35, thick * 0.20);
-    pop();
+    rect(x0 + 3, y0 + 3, cell - 6, max(3, floor((cell - 6) * 0.25)), 3);
+
+    // Tail
+    if (i === snake.length - 1) {
+      let tdx = 0, tdy = 0;
+      if (snake.length > 1) {
+        const prev = snake[i - 1];
+        tdx = s.x - prev.x;
+        tdy = s.y - prev.y;
+      } else {
+        tdx = -dir.x; tdy = -dir.y;
+      }
+      fill(darkCol);
+      if (tdx === 1) rect(x0 + cell - 4, y0 + cell / 2 - 2, 3, 4, 2);
+      else if (tdx === -1) rect(x0 + 1, y0 + cell / 2 - 2, 3, 4, 2);
+      else if (tdy === 1) rect(x0 + cell / 2 - 2, y0 + cell - 4, 4, 3, 2);
+      else if (tdy === -1) rect(x0 + cell / 2 - 2, y0 + 1, 4, 3, 2);
+      continue;
+    }
+
+    // Head
+    if (i === 0) {
+      fill(bodyCol);
+      rect(x0 + 1, y0 + 1, cell - 2, cell - 2, 6);
+
+      if (heading === "R") {
+        fill(faceCol); rect(x0 + cell - 8, y0 + cell / 2 - 4, 7, 8, 3);
+        fill(noseCol); rect(x0 + cell - 3, y0 + cell / 2 - 1, 2, 2);
+        fill(eyeCol);  rect(x0 + cell - 12, y0 + cell / 2 - 3, 2, 2);
+        fill(earCol);  rect(x0 + cell - 14, y0 + 3, 4, 6, 2);
+      } else if (heading === "L") {
+        fill(faceCol); rect(x0 + 1, y0 + cell / 2 - 4, 7, 8, 3);
+        fill(noseCol); rect(x0 + 1, y0 + cell / 2 - 1, 2, 2);
+        fill(eyeCol);  rect(x0 + 10, y0 + cell / 2 - 3, 2, 2);
+        fill(earCol);  rect(x0 + 10, y0 + 3, 4, 6, 2);
+      } else if (heading === "D") {
+        fill(faceCol); rect(x0 + cell / 2 - 4, y0 + cell - 8, 8, 7, 3);
+        fill(noseCol); rect(x0 + cell / 2 - 1, y0 + cell - 3, 2, 2);
+        fill(eyeCol);  rect(x0 + cell / 2 - 3, y0 + cell - 12, 2, 2);
+        fill(earCol);  rect(x0 + 3, y0 + cell - 14, 6, 4, 2);
+      } else {
+        fill(faceCol); rect(x0 + cell / 2 - 4, y0 + 1, 8, 7, 3);
+        fill(noseCol); rect(x0 + cell / 2 - 1, y0 + 1, 2, 2);
+        fill(eyeCol);  rect(x0 + cell / 2 - 3, y0 + 10, 2, 2);
+        fill(earCol);  rect(x0 + 3, y0 + 10, 6, 4, 2);
+      }
+      continue;
+    }
+
+    // Legs hint
+    if (i % 2 === 0) {
+      fill(darkCol);
+      rect(x0 + 4, y0 + cell - 4, 4, 3, 2);
+      rect(x0 + cell - 8, y0 + cell - 4, 4, 3, 2);
+    }
   }
 }
 
 function drawFruit() {
   noStroke();
 
-  const kibbleCol = color(120, 75, 40);   // brown kibble
-  const highlight = color(155, 105, 65);  // lighter spot
+  const kibbleCol = color(120, 75, 40);
+  const highlight = color(155, 105, 65);
 
   const cx = fruit.x * cell + cell / 2;
   const cy = fruit.y * cell + cell / 2;
 
-  // base kibble
   fill(kibbleCol);
   ellipse(cx, cy, cell * 0.6, cell * 0.5);
 
-  // small highlight
   fill(highlight);
   ellipse(cx - cell * 0.12, cy - cell * 0.1, cell * 0.18, cell * 0.14);
 
-  // tiny “crumb” dots to make it feel like kibble
   fill(kibbleCol);
   rect(cx + cell * 0.15, cy + cell * 0.05, max(2, cell * 0.08), max(2, cell * 0.08), 1);
 }
-
 
 function drawHUD() {
   fill(0);
@@ -379,9 +430,8 @@ function drawHUD() {
 
   text(hasPermission ? "Sensors ON" : "Sensors OFF", 16, 54);
 
-  if (!isMobileDevice) {
-    text("Arrow keys to steer (desktop fallback).", 16, 88);
-  }
+  textSize(12);
+  text(hasCalibrated ? "Calibrated: YES" : "Calibrated: NO", 16, 70);
 }
 
 function drawGameOver() {
@@ -398,17 +448,18 @@ function drawGameOver() {
   text("Tap to restart", width / 2, height / 2 + 34);
 }
 
-// restart
+// ------------------ INPUT / RESIZE ------------------
 function touchStarted() {
   if (gameOver) resetGame();
   return false;
 }
+
 function mousePressed() {
   if (gameOver) resetGame();
 }
 
-// Desktop keyboard fallback
 function keyPressed() {
+  // Desktop fallback
   if (keyCode === LEFT_ARROW) pendingDir = { x: -1, y: 0 };
   if (keyCode === RIGHT_ARROW) pendingDir = { x: 1, y: 0 };
   if (keyCode === UP_ARROW) pendingDir = { x: 0, y: -1 };
@@ -420,50 +471,7 @@ function windowResized() {
   resetGame();
 }
 
-// SENSOR CODE
-
-function handlePermissionButtonPressed() {
-  DeviceMotionEvent.requestPermission()
-    .then((response) => {
-      if (response === "granted") {
-        hasPermission = true;
-        window.addEventListener("devicemotion", deviceMotionHandler, true);
-      }
-    })
-    .catch(console.error);
-
-  DeviceOrientationEvent.requestPermission()
-    .then((response) => {
-      if (response === "granted") {
-        window.addEventListener("deviceorientation", deviceOrientationHandler, true);
-      }
-    })
-    .catch(console.error);
-
-  askButton?.remove();
-}
-
-// devicemotion
-function deviceMotionHandler(event) {
-  if (!event.acceleration || !event.rotationRate) return;
-
-  accX = event.acceleration.x || 0;
-  accY = event.acceleration.y || 0;
-  accZ = event.acceleration.z || 0;
-
-  rrateZ = event.rotationRate.alpha || 0;
-  rrateX = event.rotationRate.beta || 0;
-  rrateY = event.rotationRate.gamma || 0;
-}
-
-// deviceorientation
-function deviceOrientationHandler(event) {
-  rotateDegrees = event.alpha || 0;
-  frontToBack = event.beta || 0;
-  leftToRight = event.gamma || 0;
-}
-
-// Simple UA check
+// ------------------ UTILS ------------------
 function checkMobileDevice() {
   const ua = navigator.userAgent || "";
   return /Mobi|Android|iPhone|iPad|iPod/i.test(ua);
